@@ -1,0 +1,50 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '18'
+
+    - name: Install Dependencies
+      run: |
+        npm install
+        cd client && npm install && cd ..
+
+    - name: Build Server
+      run: npm run build
+
+    - name: Build Client
+      run: cd client && npm run build && cd ..
+
+    - name: Run Tests
+      run: |
+        npm test
+        cd client && npm test && cd ..
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Deploy to Render
+      env:
+        render_api_key: ${{ secrets.RENDER_API_KEY }}
+        render_service_id: ${{ secrets.RENDER_SERVICE_ID }}
+      run: |
+        curl -X POST "https://api.render.com/v1/services/$render_service_id/deploys" \
+        -H "accept: application/json" \
+        -H "authorization: Bearer $render_api_key"
