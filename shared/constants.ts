@@ -17,6 +17,7 @@ export const SOCKET_EVENTS = {
   GAME_ENDED: 'gameEnded' as const,
   GAME_STATE_UPDATED: 'gameStateUpdated' as const,
   END_GAME: 'endGame' as const,
+  LEAVE_GAME: 'leaveGame' as const,
   
   // User status events
   USER_STATUS_UPDATED: 'userStatusUpdated' as const,

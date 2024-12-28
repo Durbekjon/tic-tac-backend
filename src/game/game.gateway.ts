@@ -71,7 +71,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     
     // Start periodic cleanup of inactive games and users
     setInterval(() => this.cleanupInactiveGames(), 60000); // Every minute
-    setInterval(() => this.cleanupInactiveUsers(), 300000); // Every 5 minutes
+    setInterval(() => this.cleanupInactiveUsers(), 10000); 
   }
 
   handleConnection(client: Socket) {
@@ -146,6 +146,25 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     this.updateUserStatus(data.userId, 'online');
     this.syncUserState(client, data.userId);
     this.broadcastOnlineUsers();
+  }
+
+  @SubscribeMessage(SOCKET_EVENTS.LEAVE_GAME)
+  async handleLeaveGame(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { gameId: string; playerId: string }
+  ) {
+    const game = this.games.get(data.gameId);
+    if (game) {
+      const opponent = Object.keys(game.players).find(id => id !== data.playerId);
+      if (opponent) {
+        game.winner = opponent;
+        game.isGameOver = true;
+        game.status = 'finished';
+        this.games.set(data.gameId, game);
+        this.server.emit(SOCKET_EVENTS.GAME_STATE_UPDATED, game);
+        this.cleanupGame(data.gameId);
+      }
+    }
   }
 
   private async syncUserState(client: Socket, userId: string) {
