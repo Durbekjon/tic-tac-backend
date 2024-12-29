@@ -13,6 +13,8 @@ async function bootstrap() {
   });
 
 
+  app.setGlobalPrefix('api');
+
   // Get port and host from environment variables
   const port = process.env.PORT || 3000;
   const host = process.env.HOST || '0.0.0.0';
