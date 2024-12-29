@@ -15,6 +15,7 @@ import { Logger } from '@nestjs/common';
 interface GameInvite {
   from: string;
   to: string;
+  user: any;
 }
 
 interface GameState {
@@ -36,12 +37,13 @@ interface UserStatus {
   status: 'online' | 'in-game' | 'offline';
   currentGameId?: string;
   lastActive: number;
+  user: any;
 }
 
 @WebSocketGateway({
   cors: {
     origin: '*',
-    credentials: true
+    credentials: true,
   },
   transports: ['websocket', 'polling'],
   pingTimeout: 60000,
@@ -50,28 +52,31 @@ interface UserStatus {
   maxHttpBufferSize: 1e8,
   allowEIO3: true,
   allowUpgrades: true,
-  cookie: false
+  cookie: false,
 })
-export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewayConnection {
+export class GameGateway
+  implements OnGatewayInit, OnGatewayDisconnect, OnGatewayConnection
+{
   @WebSocketServer()
   server: Server;
 
   private readonly logger = new Logger(GameGateway.name);
   private games: Map<string, GameState> = new Map();
-  private activeGames: Map<string, string> = new Map(); // userId -> gameId
-  private onlineUsers: Map<string, string> = new Map(); // socketId -> userId
-  private userSockets: Map<string, string[]> = new Map(); // userId -> socketIds[]
-  private userStatus: Map<string, UserStatus> = new Map(); // userId -> UserStatus
-  private inactivityTimeout = 5 * 60 * 1000; // 5 minutes
+  private activeGames: Map<string, string> = new Map();
+  private onlineUsers: Map<
+    string,
+    { userId: string; firstName: string; lastName: string }
+  > = new Map();
+  private userSockets: Map<string, string[]> = new Map();
+  private userStatus: Map<string, UserStatus> = new Map();
+  private inactivityTimeout = 5 * 60 * 1000;
   private maxGamesPerUser = 5;
-  private gameTimeLimit = 10 * 60 * 1000; // 10 minutes
+  private gameTimeLimit = 10 * 60 * 1000;
 
   afterInit(server: Server) {
     this.logger.log('WebSocket Gateway initialized');
-    
-    // Start periodic cleanup of inactive games and users
-    setInterval(() => this.cleanupInactiveGames(), 60000); // Every minute
-    setInterval(() => this.cleanupInactiveUsers(), 10000); 
+    setInterval(() => this.cleanupInactiveGames(), 60000);
+    setInterval(() => this.cleanupInactiveUsers(), 10000);
   }
 
   handleConnection(client: Socket) {
@@ -80,17 +85,17 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
-    const userId = this.onlineUsers.get(client.id);
-    if (userId) {
+    const user = this.onlineUsers.get(client.id);
+    if (user) {
+      const userId = user.userId;
       const userSocketIds = this.userSockets.get(userId) || [];
-      const updatedSocketIds = userSocketIds.filter(id => id !== client.id);
-      
+      const updatedSocketIds = userSocketIds.filter((id) => id !== client.id);
+
       if (updatedSocketIds.length === 0) {
         this.handleUserOffline(userId);
       } else {
         this.userSockets.set(userId, updatedSocketIds);
       }
-      
       this.onlineUsers.delete(client.id);
     }
   }
@@ -107,7 +112,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     if (gameId) {
       const game = this.games.get(gameId);
       if (game && game.status === 'in-progress') {
-        const opponent = Object.keys(game.players).find(id => id !== userId);
+        const opponent = Object.keys(game.players).find((id) => id !== userId);
         if (opponent) {
           game.winner = opponent;
           game.isGameOver = true;
@@ -120,12 +125,18 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     }
   }
 
-  private updateUserStatus(userId: string, status: 'online' | 'in-game' | 'offline', gameId?: string) {
+  private updateUserStatus(
+    userId: string,
+    status: 'online' | 'in-game' | 'offline',
+    userData?: any,
+    gameId?: string,
+  ) {
     const userStatus: UserStatus = {
       userId,
       status,
       currentGameId: gameId,
-      lastActive: Date.now()
+      lastActive: Date.now(),
+      user: userData,
     };
     this.userStatus.set(userId, userStatus);
     this.server.emit(SOCKET_EVENTS.USER_STATUS_UPDATED, userStatus);
@@ -134,16 +145,24 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
   @SubscribeMessage(SOCKET_EVENTS.USER_CONNECTED)
   async handleUserConnected(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { userId: string }
+    @MessageBody()
+    data: { userId: string; firstName: string; lastName: string },
   ) {
     this.logger.log(`User ${data.userId} connected via socket ${client.id}`);
-    
+    this.onlineUsers.set(client.id, {
+      userId: data.userId,
+      firstName: data.firstName,
+      lastName: data.lastName,
+    });
+
     const userSocketIds = this.userSockets.get(data.userId) || [];
     userSocketIds.push(client.id);
     this.userSockets.set(data.userId, userSocketIds);
-    this.onlineUsers.set(client.id, data.userId);
-    
-    this.updateUserStatus(data.userId, 'online');
+
+    this.updateUserStatus(data.userId, 'online', {
+      firstName: data.firstName,
+      lastName: data.lastName,
+    });
     this.syncUserState(client, data.userId);
     this.broadcastOnlineUsers();
   }
@@ -151,24 +170,24 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
   @SubscribeMessage(SOCKET_EVENTS.LEAVE_GAME)
   async handleLeaveGame(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { gameId: string; playerId: string }
+    @MessageBody() data: { gameId: string; playerId: string },
   ) {
     const game = this.games.get(data.gameId);
-    if (game) {
-      const opponent = Object.keys(game.players).find(id => id !== data.playerId);
+    if (game && game.status === 'in-progress') {
+      const opponent = Object.keys(game.players).find(
+        (id) => id !== data.playerId,
+      );
       if (opponent) {
-        game.winner = opponent;
-        game.isGameOver = true;
-        game.status = 'finished';
-        this.games.set(data.gameId, game);
-        this.server.emit(SOCKET_EVENTS.GAME_STATE_UPDATED, game);
+        this.server.emit(SOCKET_EVENTS.GAME_ENDED, game);
+        this.handleGameWin(game, opponent);
         this.cleanupGame(data.gameId);
       }
+    } else if (game && game.status === 'finished') {
+      this.cleanupGame(data.gameId);
     }
   }
 
   private async syncUserState(client: Socket, userId: string) {
-    // Sync active game if exists
     const gameId = this.activeGames.get(userId);
     if (gameId) {
       const game = this.games.get(gameId);
@@ -177,10 +196,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
       }
     }
 
-    // Send current online users and their statuses
     client.emit(SOCKET_EVENTS.ONLINE_USERS, this.getOnlineUsers());
-    
-    // Send all user statuses
     const statuses = Array.from(this.userStatus.values());
     client.emit(SOCKET_EVENTS.ALL_USER_STATUSES, statuses);
   }
@@ -190,8 +206,6 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     @ConnectedSocket() client: Socket,
     @MessageBody() data: GameInvite,
   ) {
-    this.logger.log(`Game invite from ${data.from} to ${data.to}`);
-
     if (!this.canStartNewGame(data.from)) {
       client.emit(SOCKET_EVENTS.GAME_ERROR, {
         message: 'You have reached the maximum number of active games',
@@ -229,21 +243,22 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
       startTime: Date.now(),
       lastMoveTime: Date.now(),
       spectators: [],
-      moves: []
+      moves: [],
     };
 
     this.games.set(gameId, initialGameState);
-    targetUserSockets.forEach(socketId => {
+    targetUserSockets.forEach((socketId) => {
       this.server.to(socketId).emit(SOCKET_EVENTS.GAME_INVITE, {
         gameId,
         from: data.from,
+        user: data.user,
       });
     });
   }
 
   private canStartNewGame(userId: string): boolean {
     let activeGameCount = 0;
-    this.games.forEach(game => {
+    this.games.forEach((game) => {
       if (game.players[userId] && game.status === 'in-progress') {
         activeGameCount++;
       }
@@ -258,7 +273,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
   @SubscribeMessage(SOCKET_EVENTS.JOIN_AS_SPECTATOR)
   async handleSpectatorJoin(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { gameId: string; userId: string }
+    @MessageBody() data: { gameId: string; userId: string },
   ) {
     const game = this.games.get(data.gameId);
     if (!game) {
@@ -296,7 +311,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     game.moves?.push({
       player: data.playerId,
       position: data.position,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     if (this.checkWinner(game.board)) {
@@ -314,7 +329,10 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     this.server.emit(SOCKET_EVENTS.GAME_STATE_UPDATED, game);
   }
 
-  private isValidMove(game: GameState | undefined, data: { gameId: string; playerId: string; position: number }): boolean {
+  private isValidMove(
+    game: GameState | undefined,
+    data: { gameId: string; playerId: string; position: number },
+  ): boolean {
     if (!game || game.status !== 'in-progress') {
       this.server.to(data.gameId).emit(SOCKET_EVENTS.GAME_ERROR, {
         message: 'Invalid game or game not in progress',
@@ -329,9 +347,13 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
       return false;
     }
 
-    if (game.board[data.position] !== '') {
+    if (
+      data.position < 0 ||
+      data.position >= game.board.length ||
+      game.board[data.position] !== ''
+    ) {
       this.server.to(data.gameId).emit(SOCKET_EVENTS.GAME_ERROR, {
-        message: 'Position already taken',
+        message: 'Invalid move position',
       });
       return false;
     }
@@ -339,15 +361,29 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     return true;
   }
 
+  private handleNextTurn(game: GameState, currentPlayer: string) {
+    const nextPlayer = Object.keys(game.players).find(
+      (id) => id !== currentPlayer,
+    );
+    if (nextPlayer) {
+      game.currentPlayer = nextPlayer;
+    }
+  }
+
   private checkWinner(board: string[]): string | null {
-    const winPatterns = [
-      [0, 1, 2], [3, 4, 5], [6, 7, 8], // Rows
-      [0, 3, 6], [1, 4, 7], [2, 5, 8], // Columns
-      [0, 4, 8], [2, 4, 6] // Diagonals
+    const winningCombinations = [
+      [0, 1, 2],
+      [3, 4, 5],
+      [6, 7, 8],
+      [0, 3, 6],
+      [1, 4, 7],
+      [2, 5, 8],
+      [0, 4, 8],
+      [2, 4, 6],
     ];
 
-    for (const pattern of winPatterns) {
-      const [a, b, c] = pattern;
+    for (const combo of winningCombinations) {
+      const [a, b, c] = combo;
       if (board[a] && board[a] === board[b] && board[a] === board[c]) {
         return board[a];
       }
@@ -356,7 +392,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
   }
 
   private isDraw(board: string[]): boolean {
-    return board.every(cell => cell !== '');
+    return board.every((cell) => cell !== '');
   }
 
   private handleGameWin(game: GameState, winnerId: string) {
@@ -367,20 +403,16 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
   }
 
   private handleGameDraw(game: GameState) {
+    game.winner = null;
     game.isGameOver = true;
     game.status = 'finished';
     this.cleanupGame(game.gameId!);
   }
 
-  private handleNextTurn(game: GameState, currentPlayerId: string) {
-    const players = Object.keys(game.players);
-    game.currentPlayer = players.find(id => id !== currentPlayerId)!;
-  }
-
   private cleanupGame(gameId: string) {
     const game = this.games.get(gameId);
     if (game) {
-      Object.keys(game.players).forEach(playerId => {
+      Object.keys(game.players).forEach((playerId) => {
         this.activeGames.delete(playerId);
         this.updateUserStatus(playerId, 'online');
       });
@@ -390,7 +422,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
   @SubscribeMessage(SOCKET_EVENTS.ACCEPT_INVITE)
   async handleAcceptInvite(
     @ConnectedSocket() client: Socket,
-    @MessageBody() data: { gameId: string; playerId: string },
+    @MessageBody() data: { gameId: string; playerId: string; user: any },
   ) {
     const game = this.games.get(data.gameId);
     if (!game) {
@@ -403,23 +435,27 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     game.status = 'in-progress';
     this.games.set(data.gameId, game);
 
-    // Add both players to active games and update their status
     const players = Object.keys(game.players);
-    players.forEach(playerId => {
+    players.forEach((playerId) => {
       this.activeGames.set(playerId, data.gameId);
       this.updateUserStatus(playerId, 'in-game', data.gameId);
     });
 
     // Emit both game started and state updated events
-    this.server.emit(SOCKET_EVENTS.GAME_STARTED, { ...game, gameId: data.gameId });
+    this.server.emit(SOCKET_EVENTS.GAME_STARTED, {
+      ...game,
+    });
     this.server.emit(SOCKET_EVENTS.GAME_STATE_UPDATED, game);
+    this.logger.log(`Game ${data.gameId} started`);
   }
 
   private cleanupInactiveGames() {
     const now = Date.now();
     this.games.forEach((game, gameId) => {
-      if (game.status === 'in-progress' && 
-          (now - (game.lastMoveTime || 0) > this.gameTimeLimit)) {
+      if (
+        game.status === 'in-progress' &&
+        now - (game.lastMoveTime || 0) > this.gameTimeLimit
+      ) {
         game.status = 'finished';
         game.isGameOver = true;
         this.cleanupGame(gameId);
@@ -431,8 +467,10 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
   private cleanupInactiveUsers() {
     const now = Date.now();
     this.userStatus.forEach((status, userId) => {
-      if (status.status !== 'offline' && 
-          now - status.lastActive > this.inactivityTimeout) {
+      if (
+        status.status !== 'offline' &&
+        now - status.lastActive > this.inactivityTimeout
+      ) {
         this.handleUserOffline(userId);
       }
     });
@@ -443,9 +481,9 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnGatewa
     this.server.emit(SOCKET_EVENTS.ONLINE_USERS, users);
   }
 
-  private getOnlineUsers(): string[] {
+  private getOnlineUsers() {
     return Array.from(this.userStatus.entries())
-      .filter(([_, status]) => status.status !== 'offline')
-      .map(([userId]) => userId);
+      .filter(([_, status]) => status.status !== 'offline' && status.user)
+      .map(([userId, data]) => ({ userId, ...data }));
   }
 }
