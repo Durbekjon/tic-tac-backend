@@ -28,10 +28,7 @@ export class UserController {
   }
 
   @Post()
-  async create(
-    @Query('app_key') appKey: string,
-    @Body() user: Prisma.UserCreateInput,
-  ) {
+  async create(@Query('app_key') appKey: string, @Body() user: any) {
     return await this.userService.createUser(appKey, user);
   }
 
@@ -39,7 +36,7 @@ export class UserController {
   async updateUser(
     @Param('userId') userId: string,
     @Query('app_key') appKey: string,
-    @Body() user: Prisma.UserUpdateInput,
+    @Body() user: any,
   ) {
     return await this.userService.updateUser(appKey, userId, user);
   }

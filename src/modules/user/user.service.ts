@@ -37,18 +37,14 @@ export class UserService {
     return user;
   }
 
-  async createUser(appKey: string, user: Prisma.UserCreateInput) {
+  async createUser(appKey: string, user: any) {
     await this.validateAppKey(appKey);
     return this.userRepository.createUser({
       ...user,
     });
   }
 
-  async updateUser(
-    appKey: string,
-    userId: string,
-    user: Prisma.UserUpdateInput,
-  ) {
+  async updateUser(appKey: string, userId: string, user: any) {
     await this.validateAppKey(appKey);
     const existingUser = await this.userRepository.findByChatId(userId);
     if (!existingUser) {
