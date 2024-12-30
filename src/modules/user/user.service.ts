@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import {
   BadRequestException,
   NotFoundException,
@@ -13,11 +13,15 @@ interface ValidatedAppKey {
 }
 
 @Injectable()
-export class UserService {
+export class UserService implements OnModuleInit {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly configService: ConfigService,
   ) {}
+
+  async onModuleInit() {
+    const users = await this.userRepository.findAll();
+  }
 
   async findAll(appKey: string) {
     await this.validateAppKey(appKey);
@@ -32,7 +36,7 @@ export class UserService {
     }
     const user = await this.userRepository.findByChatId(chatId);
     if (!user) {
-      throw new NotFoundException(`User with chatId ${chatId} not found`);
+      return null;
     }
     return user;
   }

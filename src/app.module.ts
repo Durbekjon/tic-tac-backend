@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { HealthController } from './modules/health/health.controller';
 import { GameModule } from './game/game.module';
 import { UserModule } from './modules/user/user.module';
