@@ -56,7 +56,25 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       .to(this.connectedPlayers[data.to])
       .emit(SOCKET_EVENTS.GAME_INVITE, data);
 
+    this.gameService.addInvite(data.from, data.to);
+
+    const userInvites = this.gameService.getInvites(data.from);
+    console.log(userInvites);
+    this.server
+      .to(this.connectedPlayers[data.from])
+      .emit(SOCKET_EVENTS.INVITE_SENT, userInvites);
+
     this.gameService.createGame(data.from);
+  }
+
+  @SubscribeMessage(SOCKET_EVENTS.REJECT_INVITE)
+  handleRejectInvite(client: Socket, data: { from: string; to: string }) {
+    this.gameService.removeInvite(data.from, data.to);
+    const userInvites = this.gameService.getInvites(data.from);
+    this.server
+      .to(this.connectedPlayers[data.from])
+      .emit(SOCKET_EVENTS.INVITE_SENT, userInvites);
+    this.server.to(this.connectedPlayers[data.from]).emit(SOCKET_EVENTS.REJECT);
   }
 
   @SubscribeMessage(SOCKET_EVENTS.ACCEPT_INVITE)
@@ -66,6 +84,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       .to(this.connectedPlayers[data.from])
       .to(this.connectedPlayers[data.to])
       .emit(SOCKET_EVENTS.GAME_STARTED, game);
+
+    this.gameService.removeInvite(data.from, data.to);
+    const userInvites = this.gameService.getInvites(data.from);
+    this.server
+      .to(this.connectedPlayers[data.from])
+      .emit(SOCKET_EVENTS.INVITE_SENT, userInvites);
   }
 
   @SubscribeMessage(SOCKET_EVENTS.MAKE_MOVE)
@@ -88,7 +112,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client: Socket,
     data: { gameId: string; playerId: string },
   ) {
-    const game = await this.gameService.endGame(data.gameId, data.playerId);
+    const game = await this.gameService.leaveGame(data.gameId, data.playerId);
     this.server.to(data.gameId).emit(SOCKET_EVENTS.GAME_ENDED, game);
   }
 

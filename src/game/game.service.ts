@@ -15,6 +15,7 @@ export interface GameState {
 export class GameService {
   private games = new Map<string, GameState>();
   private players = new Map<string, IUser>(); // playerId -> userData
+  private userSentInvites = new Map<string, string[]>(); // playerId -> invitedPlayerId
   getOnlinePlayers() {
     return Array.from(this.players).map(([_, player]) => player);
   }
@@ -41,6 +42,25 @@ export class GameService {
     return this.games.get(gameId);
   }
 
+  addInvite(playerId: string, invitedPlayerId: string) {
+    const invites = this.userSentInvites.get(playerId) || [];
+    if (invites.includes(invitedPlayerId)) return;
+    invites.push(invitedPlayerId);
+    this.userSentInvites.set(playerId, invites);
+  }
+  removeInvite(playerId: string, invitedPlayerId: string) {
+    const invites = this.userSentInvites.get(playerId) || [];
+    const index = invites.indexOf(invitedPlayerId);
+    if (index !== -1) {
+      invites.splice(index, 1);
+      this.userSentInvites.set(playerId, invites);
+    }
+  }
+
+  getInvites(playerId: string) {
+    return this.userSentInvites.get(playerId) || [];
+  }
+
   async startGame(playerId: string, otherPlayerId: string) {
     const game = this.createGame(playerId);
     game.players[otherPlayerId] = 'O';
@@ -52,8 +72,9 @@ export class GameService {
     try {
       const game = this.games.get(gameId);
 
-      if (!game || game.isGameOver || game.board[position]) {
-        throw new Error('Invalid move');
+      console.log('game', game);
+      if (!game || game.isGameOver) {
+        return;
       }
 
       game.board[position] = game.players[playerId];
@@ -81,6 +102,17 @@ export class GameService {
       game.isGameOver = true;
       game.status = 'game-over';
       this.games.delete(gameId);
+    }
+    return game;
+  }
+
+  leaveGame(gameId: string, playerId: string) {
+    const game = this.games.get(gameId);
+    if (game) {
+      game.isGameOver = true;
+      game.status = 'game-over';
+      game.winner = playerId === game.players['X'] ? 'O' : 'X';
+      this.games.set(gameId, game);
     }
     return game;
   }

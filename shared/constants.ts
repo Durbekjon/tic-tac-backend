@@ -8,8 +8,10 @@ export const SOCKET_EVENTS = {
   // Game invitation events
   SEND_GAME_INVITE: 'sendGameInvite' as const,
   GAME_INVITE: 'gameInvite' as const,
+  REJECT_INVITE: 'rejectInvite' as const,
   ACCEPT_INVITE: 'acceptInvite' as const,
-  
+  REJECT: 'reject' as const,
+  INVITE_SENT: 'inviteSent' as const,
   // Game state events
   MAKE_MOVE: 'makeMove' as const,
   MOVE_MADE: 'moveMade' as const,
