@@ -5,14 +5,7 @@ import { Logger } from '@nestjs/common';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS with configuration from environment
-  app.enableCors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:4200',
-    methods: ['GET','POST'],
-    credentials: true,
-  });
-
-
+  app.enableCors();
   app.setGlobalPrefix('api');
 
   // Get port and host from environment variables
