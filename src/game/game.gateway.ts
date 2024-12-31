@@ -59,7 +59,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.gameService.addInvite(data.from, data.to);
 
     const userInvites = this.gameService.getInvites(data.from);
-    console.log(userInvites);
     this.server
       .to(this.connectedPlayers[data.from])
       .emit(SOCKET_EVENTS.INVITE_SENT, userInvites);

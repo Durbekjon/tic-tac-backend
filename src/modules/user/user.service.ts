@@ -4,7 +4,6 @@ import {
   NotFoundException,
 } from '@nestjs/common/exceptions';
 import { UserRepository } from './user.repository';
-import { Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 
 interface ValidatedAppKey {
@@ -13,15 +12,11 @@ interface ValidatedAppKey {
 }
 
 @Injectable()
-export class UserService implements OnModuleInit {
+export class UserService {
   constructor(
     private readonly userRepository: UserRepository,
     private readonly configService: ConfigService,
   ) {}
-
-  async onModuleInit() {
-    const users = await this.userRepository.findAll();
-  }
 
   async findAll(appKey: string) {
     await this.validateAppKey(appKey);
@@ -36,16 +31,14 @@ export class UserService implements OnModuleInit {
     }
     const user = await this.userRepository.findByChatId(chatId);
     if (!user) {
-      return null;
+      return { success: false, user: null };
     }
-    return user;
+    return { success: true, user };
   }
 
   async createUser(appKey: string, user: any) {
     await this.validateAppKey(appKey);
-    return this.userRepository.createUser({
-      ...user,
-    });
+    return this.userRepository.createUser(user);
   }
 
   async updateUser(appKey: string, userId: string, user: any) {

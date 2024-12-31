@@ -72,7 +72,6 @@ export class GameService {
     try {
       const game = this.games.get(gameId);
 
-      console.log('game', game);
       if (!game || game.isGameOver) {
         return;
       }
