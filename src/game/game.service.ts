@@ -13,7 +13,6 @@ export interface GameState {
   status: string; // 'waiting', 'in-progress', 'game-over'
   gameId: string;
 }
-
 @Injectable()
 export class GameService {
   private games = new Map<string, GameState>();
@@ -122,6 +121,7 @@ export class GameService {
 
     const bot = game.players['bot'];
     const playerSymbol = 'X';
+
     const bestMove = this.calculateBestMove(
       game.board,
       bot.symbol,
@@ -158,17 +158,21 @@ export class GameService {
     botSymbol: string,
     playerSymbol: string,
   ): number {
-    const minimax = (board: string[], isMaximizing: boolean): number => {
+    const minimax = (
+      board: string[],
+      depth: number,
+      isMaximizing: boolean,
+    ): number => {
       const winner = this.checkWinner(board);
-      if (winner === botSymbol) return 10;
-      if (winner === playerSymbol) return -10;
-      if (board.every((cell) => cell !== '')) return 0;
+      if (winner === botSymbol) return 10 - depth; // Bot wins
+      if (winner === playerSymbol) return depth - 10; // Player wins
+      if (board.every((cell) => cell !== '')) return 0; // Draw
 
       const scores: number[] = [];
       for (let i = 0; i < board.length; i++) {
         if (board[i] === '') {
           board[i] = isMaximizing ? botSymbol : playerSymbol;
-          scores.push(minimax(board, !isMaximizing));
+          scores.push(minimax(board, depth + 1, !isMaximizing));
           board[i] = '';
         }
       }
@@ -181,7 +185,7 @@ export class GameService {
     for (let i = 0; i < board.length; i++) {
       if (board[i] === '') {
         board[i] = botSymbol;
-        const score = minimax(board, false);
+        const score = minimax(board, 0, false);
         board[i] = '';
         if (score > bestScore) {
           bestScore = score;
