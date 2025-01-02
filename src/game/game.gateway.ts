@@ -104,6 +104,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     this.server.emit(SOCKET_EVENTS.MOVE_MADE, game);
     this.server.emit(SOCKET_EVENTS.GAME_STATE_UPDATED, game);
+
+    if (game.players['bot']?.symbol === 'O')
+      await this.handleBotMove(game.gameId);
   }
 
   @SubscribeMessage(SOCKET_EVENTS.LEAVE_GAME)
@@ -113,6 +116,23 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const game = await this.gameService.leaveGame(data.gameId, data.playerId);
     this.server.to(data.gameId).emit(SOCKET_EVENTS.GAME_ENDED, game);
+  }
+
+  @SubscribeMessage(SOCKET_EVENTS.PLAY_WITH_BOT)
+  async handlePlayWithBot(client: Socket, data: { userId: string }) {
+    const game = await this.gameService.startGame(data.userId, 'bot');
+    this.server
+      .to(this.connectedPlayers[data.userId])
+      .emit(SOCKET_EVENTS.GAME_STARTED, game);
+  }
+
+  async handleBotMove(gameId: string) {
+    const game = await this.gameService.botMove(gameId);
+    setTimeout(() => {
+      this.server.emit(SOCKET_EVENTS.MOVE_MADE, game);
+
+      this.server.emit(SOCKET_EVENTS.GAME_STATE_UPDATED, game);
+    }, 2000);
   }
 
   private savePlayerId(playerId: string, userId: string) {

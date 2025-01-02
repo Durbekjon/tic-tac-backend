@@ -6,7 +6,9 @@ export interface GameState {
   currentPlayer: string;
   winner: string | null;
   isGameOver: boolean;
-  players: { [key: string]: string }; // playerId -> symbol (X or O)
+  players: {
+    [key: string]: { symbol: 'X' | 'O'; lastMovePositions: number[] };
+  }; // playerId -> symbol (X or O)
   status: string; // 'waiting', 'in-progress', 'game-over'
   gameId: string;
 }
@@ -35,7 +37,7 @@ export class GameService {
       currentPlayer: 'X',
       winner: null,
       isGameOver: false,
-      players: { [playerId]: 'X' },
+      players: { [playerId]: { symbol: 'X', lastMovePositions: [] } },
       status: 'waiting',
       gameId,
     });
@@ -63,7 +65,7 @@ export class GameService {
 
   async startGame(playerId: string, otherPlayerId: string) {
     const game = this.createGame(playerId);
-    game.players[otherPlayerId] = 'O';
+    game.players[otherPlayerId] = { symbol: 'O', lastMovePositions: [] };
     game.status = 'in-progress';
     return game;
   }
@@ -76,9 +78,8 @@ export class GameService {
         return;
       }
 
-      game.board[position] = game.players[playerId];
-      game.currentPlayer = game.players[playerId] === 'X' ? 'O' : 'X';
-
+      game.board[position] = game.players[playerId].symbol;
+      game.currentPlayer = game.players[playerId].symbol === 'X' ? 'O' : 'X';
       const winner = this.checkWinner(game.board);
       if (winner) {
         game.winner = winner;
@@ -88,11 +89,84 @@ export class GameService {
         game.status = 'game-over';
         game.isGameOver = true;
       }
+      game.players[playerId].lastMovePositions.push(position);
+      if (game.players[playerId].lastMovePositions.length > 3 && !game.winner) {
+        game.board[game.players[playerId].lastMovePositions[0]] = '';
+        game.players[playerId].lastMovePositions.shift();
+      }
+
       this.games.set(gameId, game);
       return game;
     } catch (error) {
       console.error(error);
     }
+  }
+
+  async botMove(gameId: string) {
+    const game = this.games.get(gameId);
+    if (!game || game.isGameOver) return game;
+
+    const bot = game.players['bot'];
+    // const playerSymbol = Object.keys(game.players).find(
+    //   (playerId) => game.players[playerId] !== botSymbol,
+    // );
+    const playerSymbol = 'X';
+    const minimax = (board: string[], isMaximizing: boolean): number => {
+      const winner = this.checkWinner(board);
+      if (winner === bot.symbol) return 10;
+      if (winner === playerSymbol) return -10;
+      if (board.every((cell) => cell !== '')) return 0;
+
+      const scores: number[] = [];
+      for (let i = 0; i < board.length; i++) {
+        if (board[i] === '') {
+          board[i] = isMaximizing ? bot.symbol : playerSymbol;
+          scores.push(minimax(board, !isMaximizing));
+          board[i] = '';
+        }
+      }
+      return isMaximizing ? Math.max(...scores) : Math.min(...scores);
+    };
+
+    let bestScore = -Infinity;
+    let bestMove = -1;
+
+    for (let i = 0; i < game.board.length; i++) {
+      if (game.board[i] === '') {
+        game.board[i] = bot.symbol;
+        const score = minimax(game.board, false);
+        game.board[i] = '';
+        if (score > bestScore) {
+          bestScore = score;
+          bestMove = i;
+        }
+      }
+    }
+
+    // Bot harakatini amalga oshirish
+    if (bestMove !== -1) {
+      game.board[bestMove] = bot.symbol;
+      game.currentPlayer = playerSymbol;
+
+      const winner = this.checkWinner(game.board);
+      if (winner) {
+        game.winner = winner;
+        game.isGameOver = true;
+        game.status = 'game-over';
+      } else if (game.board.every((cell) => cell !== '')) {
+        game.isGameOver = true;
+        game.status = 'game-over';
+      }
+      game.players['bot'].lastMovePositions.push(bestMove);
+      if (game.players['bot'].lastMovePositions.length >= 4) {
+        game.board[game.players['bot'].lastMovePositions[0]] = '';
+        game.players['bot'].lastMovePositions.shift();
+      }
+
+      this.games.set(gameId, game);
+    }
+
+    return game;
   }
 
   endGame(gameId: string, playerId: string) {
@@ -110,7 +184,7 @@ export class GameService {
     if (game) {
       game.isGameOver = true;
       game.status = 'game-over';
-      game.winner = playerId === game.players['X'] ? 'O' : 'X';
+      game.winner = game.players[playerId].symbol === 'X' ? 'O' : 'X';
       this.games.set(gameId, game);
     }
     return game;
