@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { IUser } from 'src/interfaces/user.interface';
+
 export interface GameState {
   board: string[];
   currentPlayer: string;
@@ -8,7 +9,7 @@ export interface GameState {
   isGameOver: boolean;
   players: {
     [key: string]: { symbol: 'X' | 'O'; lastMovePositions: number[] };
-  }; // playerId -> symbol (X or O)
+  };
   status: string; // 'waiting', 'in-progress', 'game-over'
   gameId: string;
 }
@@ -18,8 +19,9 @@ export class GameService {
   private games = new Map<string, GameState>();
   private players = new Map<string, IUser>(); // playerId -> userData
   private userSentInvites = new Map<string, string[]>(); // playerId -> invitedPlayerId
+
   getOnlinePlayers() {
-    return Array.from(this.players).map(([_, player]) => player);
+    return Array.from(this.players.values());
   }
 
   addPlayer(user: IUser) {
@@ -30,9 +32,9 @@ export class GameService {
     this.players.delete(playerId);
   }
 
-  createGame(playerId: string) {
+  createGame(playerId: string): GameState {
     const gameId = randomUUID();
-    this.games.set(gameId, {
+    const initialGameState: GameState = {
       board: Array(9).fill(''),
       currentPlayer: 'X',
       winner: null,
@@ -40,16 +42,19 @@ export class GameService {
       players: { [playerId]: { symbol: 'X', lastMovePositions: [] } },
       status: 'waiting',
       gameId,
-    });
-    return this.games.get(gameId);
+    };
+    this.games.set(gameId, initialGameState);
+    return initialGameState;
   }
 
   addInvite(playerId: string, invitedPlayerId: string) {
     const invites = this.userSentInvites.get(playerId) || [];
-    if (invites.includes(invitedPlayerId)) return;
-    invites.push(invitedPlayerId);
-    this.userSentInvites.set(playerId, invites);
+    if (!invites.includes(invitedPlayerId)) {
+      invites.push(invitedPlayerId);
+      this.userSentInvites.set(playerId, invites);
+    }
   }
+
   removeInvite(playerId: string, invitedPlayerId: string) {
     const invites = this.userSentInvites.get(playerId) || [];
     const index = invites.indexOf(invitedPlayerId);
@@ -59,91 +64,71 @@ export class GameService {
     }
   }
 
-  getInvites(playerId: string) {
+  getInvites(playerId: string): string[] {
     return this.userSentInvites.get(playerId) || [];
   }
 
-  async startGame(playerId: string, otherPlayerId: string) {
+  async startGame(playerId: string, otherPlayerId: string): Promise<GameState> {
     const game = this.createGame(playerId);
     game.players[otherPlayerId] = { symbol: 'O', lastMovePositions: [] };
     game.status = 'in-progress';
     return game;
   }
 
-  async makeMove(gameId: string, playerId: string, position: number) {
-    try {
-      const game = this.games.get(gameId);
+  async makeMove(
+    gameId: string,
+    playerId: string,
+    position: number,
+  ): Promise<GameState | undefined> {
+    const game = this.games.get(gameId);
+    if (!game || game.isGameOver) return;
 
-      if (!game || game.isGameOver) {
-        return;
-      }
+    this.updateGameBoard(game, playerId, position);
 
-      game.board[position] = game.players[playerId].symbol;
-      game.currentPlayer = game.players[playerId].symbol === 'X' ? 'O' : 'X';
-      const winner = this.checkWinner(game.board);
-      if (winner) {
-        game.winner = winner;
-        game.isGameOver = true;
-        game.status = 'game-over';
-      } else if (game.board.every((cell) => cell !== '')) {
-        game.status = 'game-over';
-        game.isGameOver = true;
-      }
-      game.players[playerId].lastMovePositions.push(position);
-      if (game.players[playerId].lastMovePositions.length > 3 && !game.winner) {
-        game.board[game.players[playerId].lastMovePositions[0]] = '';
-        game.players[playerId].lastMovePositions.shift();
-      }
+    if (game.players[playerId].lastMovePositions.length > 3 && !game.winner) {
+      this.removeOldMove(game, playerId);
+    }
 
-      this.games.set(gameId, game);
-      return game;
-    } catch (error) {
-      console.error(error);
+    this.games.set(gameId, game);
+    return game;
+  }
+
+  private updateGameBoard(game: GameState, playerId: string, position: number) {
+    game.board[position] = game.players[playerId].symbol;
+    game.currentPlayer = game.players[playerId].symbol === 'X' ? 'O' : 'X';
+
+    const winner = this.checkWinner(game.board);
+    if (winner) {
+      game.winner = winner;
+      game.isGameOver = true;
+      game.status = 'game-over';
+    } else if (game.board.every((cell) => cell !== '')) {
+      game.status = 'game-over';
+      game.isGameOver = true;
+    }
+
+    game.players[playerId].lastMovePositions.push(position);
+  }
+
+  private removeOldMove(game: GameState, playerId: string) {
+    const oldestMove = game.players[playerId].lastMovePositions.shift();
+    if (oldestMove !== undefined) {
+      game.board[oldestMove] = '';
     }
   }
 
-  async botMove(gameId: string) {
+  async botMove(gameId: string): Promise<GameState | undefined> {
     const game = this.games.get(gameId);
     if (!game || game.isGameOver) return game;
 
     const bot = game.players['bot'];
-    // const playerSymbol = Object.keys(game.players).find(
-    //   (playerId) => game.players[playerId] !== botSymbol,
-    // );
     const playerSymbol = 'X';
-    const minimax = (board: string[], isMaximizing: boolean): number => {
-      const winner = this.checkWinner(board);
-      if (winner === bot.symbol) return 10;
-      if (winner === playerSymbol) return -10;
-      if (board.every((cell) => cell !== '')) return 0;
+    const bestMove = this.calculateBestMove(
+      game.board,
+      bot.symbol,
+      playerSymbol,
+    );
 
-      const scores: number[] = [];
-      for (let i = 0; i < board.length; i++) {
-        if (board[i] === '') {
-          board[i] = isMaximizing ? bot.symbol : playerSymbol;
-          scores.push(minimax(board, !isMaximizing));
-          board[i] = '';
-        }
-      }
-      return isMaximizing ? Math.max(...scores) : Math.min(...scores);
-    };
-
-    let bestScore = -Infinity;
-    let bestMove = -1;
-
-    for (let i = 0; i < game.board.length; i++) {
-      if (game.board[i] === '') {
-        game.board[i] = bot.symbol;
-        const score = minimax(game.board, false);
-        game.board[i] = '';
-        if (score > bestScore) {
-          bestScore = score;
-          bestMove = i;
-        }
-      }
-    }
-
-    // Bot harakatini amalga oshirish
     if (bestMove !== -1) {
       game.board[bestMove] = bot.symbol;
       game.currentPlayer = playerSymbol;
@@ -157,10 +142,10 @@ export class GameService {
         game.isGameOver = true;
         game.status = 'game-over';
       }
+
       game.players['bot'].lastMovePositions.push(bestMove);
       if (game.players['bot'].lastMovePositions.length >= 4) {
-        game.board[game.players['bot'].lastMovePositions[0]] = '';
-        game.players['bot'].lastMovePositions.shift();
+        this.removeOldMove(game, 'bot');
       }
 
       this.games.set(gameId, game);
@@ -169,7 +154,47 @@ export class GameService {
     return game;
   }
 
-  endGame(gameId: string, playerId: string) {
+  private calculateBestMove(
+    board: string[],
+    botSymbol: string,
+    playerSymbol: string,
+  ): number {
+    const minimax = (board: string[], isMaximizing: boolean): number => {
+      const winner = this.checkWinner(board);
+      if (winner === botSymbol) return 10;
+      if (winner === playerSymbol) return -10;
+      if (board.every((cell) => cell !== '')) return 0;
+
+      const scores: number[] = [];
+      for (let i = 0; i < board.length; i++) {
+        if (board[i] === '') {
+          board[i] = isMaximizing ? botSymbol : playerSymbol;
+          scores.push(minimax(board, !isMaximizing));
+          board[i] = '';
+        }
+      }
+      return isMaximizing ? Math.max(...scores) : Math.min(...scores);
+    };
+
+    let bestScore = -Infinity;
+    let bestMove = -1;
+
+    for (let i = 0; i < board.length; i++) {
+      if (board[i] === '') {
+        board[i] = botSymbol;
+        const score = minimax(board, false);
+        board[i] = '';
+        if (score > bestScore) {
+          bestScore = score;
+          bestMove = i;
+        }
+      }
+    }
+
+    return bestMove;
+  }
+
+  endGame(gameId: string, playerId: string): GameState | undefined {
     const game = this.games.get(gameId);
     if (game) {
       game.isGameOver = true;
@@ -179,7 +204,7 @@ export class GameService {
     return game;
   }
 
-  leaveGame(gameId: string, playerId: string) {
+  leaveGame(gameId: string, playerId: string): GameState | undefined {
     const game = this.games.get(gameId);
     if (game) {
       game.isGameOver = true;
@@ -202,8 +227,7 @@ export class GameService {
       [2, 4, 6],
     ];
 
-    for (let i = 0; i < winningCombinations.length; i++) {
-      const [a, b, c] = winningCombinations[i];
+    for (let [a, b, c] of winningCombinations) {
       if (board[a] && board[a] === board[b] && board[a] === board[c]) {
         return board[a]; // 'X' or 'O'
       }
