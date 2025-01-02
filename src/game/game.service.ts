@@ -96,6 +96,7 @@ export class GameService {
   private updateGameBoard(game: GameState, playerId: string, position: number) {
     game.board[position] = game.players[playerId].symbol;
     game.currentPlayer = game.players[playerId].symbol === 'X' ? 'O' : 'X';
+    game.players[playerId].lastMovePositions.push(position);
 
     const winner = this.checkWinner(game.board);
     if (winner) {
@@ -106,8 +107,6 @@ export class GameService {
       game.status = 'game-over';
       game.isGameOver = true;
     }
-
-    game.players[playerId].lastMovePositions.push(position);
   }
 
   private removeOldMove(game: GameState, playerId: string) {
@@ -133,6 +132,11 @@ export class GameService {
       game.board[bestMove] = bot.symbol;
       game.currentPlayer = playerSymbol;
 
+      game.players['bot'].lastMovePositions.push(bestMove);
+      if (game.players['bot'].lastMovePositions.length >= 4) {
+        this.removeOldMove(game, 'bot');
+      }
+
       const winner = this.checkWinner(game.board);
       if (winner) {
         game.winner = winner;
@@ -141,11 +145,6 @@ export class GameService {
       } else if (game.board.every((cell) => cell !== '')) {
         game.isGameOver = true;
         game.status = 'game-over';
-      }
-
-      game.players['bot'].lastMovePositions.push(bestMove);
-      if (game.players['bot'].lastMovePositions.length >= 4) {
-        this.removeOldMove(game, 'bot');
       }
 
       this.games.set(gameId, game);
