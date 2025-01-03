@@ -18,7 +18,7 @@ export class SupportService {
 
     if (!user) throw new BadRequestException('User not found');
 
-    const data: Prisma.SupportTicketCreateInput = {
+    const data: any = {
       text: body.text,
       imageUrl: body.imageUrl,
       user: {
