@@ -10,8 +10,11 @@ export class UserRepository {
     return this.prisma.user.findMany();
   }
 
-  findByChatId(chatId: string) {
+  findByChatId(chatId: string): Promise<User> {
     return this.prisma.user.findUnique({ where: { chatId } });
+  }
+  findById(userId: string): Promise<User> {
+    return this.prisma.user.findUnique({ where: { id: userId } });
   }
 
   createUser(user: any): Promise<User> {
