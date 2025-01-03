@@ -3,6 +3,7 @@ import { HealthController } from './modules/health/health.controller';
 import { GameModule } from './game/game.module';
 import { UserModule } from './modules/user/user.module';
 import { ConfigModule } from '@nestjs/config';
+import { SupportModule } from './modules/support/support.module';
 
 @Module({
   imports: [
@@ -11,6 +12,7 @@ import { ConfigModule } from '@nestjs/config';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    SupportModule,
   ],
   controllers: [HealthController],
   providers: [],

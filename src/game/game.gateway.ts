@@ -7,7 +7,7 @@ import {
 } from '@nestjs/websockets';
 import { Socket, Server } from 'socket.io';
 import { GameService } from './game.service';
-import { SOCKET_EVENTS } from 'shared/constants';
+import { SOCKET_EVENTS } from 'src/constants';
 import { IUser } from 'src/interfaces/user.interface';
 import { Logger } from '@nestjs/common';
 
