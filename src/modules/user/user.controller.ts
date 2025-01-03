@@ -8,7 +8,6 @@ import {
   Query,
 } from '@nestjs/common';
 import { UserService } from './user.service';
-import { Prisma } from '@prisma/client';
 
 @Controller({ path: 'user' })
 export class UserController {

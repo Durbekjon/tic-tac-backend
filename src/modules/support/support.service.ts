@@ -1,7 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { SupportRepository } from './support.repository';
 import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
-import { Prisma, TicketStatus } from '@prisma/client';
 import { UserRepository } from '../user/user.repository';
 import { ConfigService } from '@nestjs/config';
 
@@ -26,7 +25,7 @@ export class SupportService {
           id: user.chatId,
         },
       },
-      status: TicketStatus.PENDING,
+      status: 'PENDING',
     };
 
     return {
