@@ -1,23 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { GameState } from 'src/interfaces/game.interface';
 import { IUser } from 'src/interfaces/user.interface';
 
-export interface GameState {
-  board: string[];
-  currentPlayer: string;
-  winner: string | null;
-  isGameOver: boolean;
-  players: {
-    [key: string]: { symbol: 'X' | 'O'; lastMovePositions: number[] };
-  };
-  status: string; // 'waiting', 'in-progress', 'game-over'
-  gameId: string;
-}
 @Injectable()
 export class GameService {
   private games = new Map<string, GameState>();
-  private players = new Map<string, IUser>(); // playerId -> userData
-  private userSentInvites = new Map<string, string[]>(); // playerId -> invitedPlayerId
+  private players = new Map<string, IUser>();
+  private userSentInvites = new Map<string, string[]>();
 
   getOnlinePlayers() {
     return Array.from(this.players.values());
@@ -31,7 +21,10 @@ export class GameService {
     this.players.delete(playerId);
   }
 
-  createGame(playerId: string): GameState {
+  createGame(
+    playerId: string,
+    botLevel: 'EASY' | 'MEDIUM' | 'HARD' | 'NO-BOT',
+  ): GameState {
     const gameId = randomUUID();
     const initialGameState: GameState = {
       board: Array(9).fill(''),
@@ -41,6 +34,7 @@ export class GameService {
       players: { [playerId]: { symbol: 'X', lastMovePositions: [] } },
       status: 'waiting',
       gameId,
+      botLevel,
     };
     this.games.set(gameId, initialGameState);
     return initialGameState;
@@ -67,8 +61,15 @@ export class GameService {
     return this.userSentInvites.get(playerId) || [];
   }
 
-  async startGame(playerId: string, otherPlayerId: string): Promise<GameState> {
-    const game = this.createGame(playerId);
+  async startGame(
+    playerId: string,
+    otherPlayerId: string,
+    botLevel?: 'EASY' | 'MEDIUM' | 'HARD',
+  ): Promise<GameState> {
+    const game = this.createGame(
+      playerId,
+      otherPlayerId === 'bot' ? botLevel : 'NO-BOT',
+    );
     game.players[otherPlayerId] = { symbol: 'O', lastMovePositions: [] };
     game.status = 'in-progress';
     return game;
@@ -115,6 +116,27 @@ export class GameService {
     }
   }
 
+  endGame(gameId: string, playerId: string): GameState | undefined {
+    const game = this.games.get(gameId);
+    if (game) {
+      game.isGameOver = true;
+      game.status = 'game-over';
+      this.games.delete(gameId);
+    }
+    return game;
+  }
+
+  leaveGame(gameId: string, playerId: string): GameState | undefined {
+    const game = this.games.get(gameId);
+    if (game) {
+      game.isGameOver = true;
+      game.status = 'game-over';
+      game.winner = game.players[playerId].symbol === 'X' ? 'O' : 'X';
+      this.games.set(gameId, game);
+    }
+    return game;
+  }
+
   async botMove(gameId: string): Promise<GameState | undefined> {
     const game = this.games.get(gameId);
     if (!game || game.isGameOver) return game;
@@ -122,6 +144,119 @@ export class GameService {
     const bot = game.players['bot'];
     const playerSymbol = 'X';
 
+    switch (game.botLevel) {
+      case 'EASY':
+        this.easyLevelMove(game, bot, playerSymbol);
+        break;
+      case 'MEDIUM':
+        this.mediumLevelMove(game, bot, playerSymbol);
+        break;
+      case 'HARD':
+        this.hardLevelMove(game, bot, playerSymbol);
+        break;
+      default:
+        this.easyLevelMove(game, bot, playerSymbol);
+        break;
+    }
+
+    return game;
+  }
+
+  private easyLevelMove(game: GameState, bot: any, playerSymbol: string) {
+    // Find all available moves
+    const availableMoves = game.board
+      .map((cell, index) => (cell === '' ? index : -1))
+      .filter((index) => index !== -1);
+
+    // Choose a random move
+    if (availableMoves.length > 0) {
+      const randomMove =
+        availableMoves[Math.floor(Math.random() * availableMoves.length)];
+      game.board[randomMove] = bot.symbol;
+      game.currentPlayer = playerSymbol;
+
+      bot.lastMovePositions.push(randomMove);
+      if (bot.lastMovePositions.length >= 4) {
+        this.removeOldMove(game, 'bot');
+      }
+
+      const winner = this.checkWinner(game.board);
+      if (winner) {
+        game.winner = winner;
+        game.isGameOver = true;
+        game.status = 'game-over';
+      } else if (game.board.every((cell) => cell !== '')) {
+        game.isGameOver = true;
+        game.status = 'game-over';
+      }
+
+      this.games.set(game.gameId, game);
+    }
+  }
+
+  private mediumLevelMove(game: GameState, bot: any, playerSymbol: string) {
+    // Check if the bot can win in this move
+    for (let i = 0; i < game.board.length; i++) {
+      if (game.board[i] === '') {
+        game.board[i] = bot.symbol;
+        if (this.checkWinner(game.board) === bot.symbol) {
+          game.currentPlayer = playerSymbol;
+          bot.lastMovePositions.push(i);
+          if (bot.lastMovePositions.length >= 4) {
+            this.removeOldMove(game, 'bot');
+          }
+
+          const winner = this.checkWinner(game.board);
+          if (winner) {
+            game.winner = winner;
+            game.isGameOver = true;
+            game.status = 'game-over';
+          } else if (game.board.every((cell) => cell !== '')) {
+            game.isGameOver = true;
+            game.status = 'game-over';
+          }
+
+          this.games.set(game.gameId, game);
+          return;
+        }
+        game.board[i] = ''; // Undo move
+      }
+    }
+
+    // Block the player's winning move
+    for (let i = 0; i < game.board.length; i++) {
+      if (game.board[i] === '') {
+        game.board[i] = playerSymbol;
+        if (this.checkWinner(game.board) === playerSymbol) {
+          game.board[i] = bot.symbol;
+          game.currentPlayer = playerSymbol;
+          bot.lastMovePositions.push(i);
+          if (bot.lastMovePositions.length >= 4) {
+            this.removeOldMove(game, 'bot');
+          }
+
+          const winner = this.checkWinner(game.board);
+          if (winner) {
+            game.winner = winner;
+            game.isGameOver = true;
+            game.status = 'game-over';
+          } else if (game.board.every((cell) => cell !== '')) {
+            game.isGameOver = true;
+            game.status = 'game-over';
+          }
+
+          this.games.set(game.gameId, game);
+          return;
+        }
+        game.board[i] = ''; // Undo move
+      }
+    }
+
+    // If no win or block, pick a random move
+    this.easyLevelMove(game, bot, playerSymbol);
+  }
+
+  private hardLevelMove(game: GameState, bot: any, playerSymbol: string) {
     const bestMove = this.calculateBestMove(
       game.board,
       bot.symbol,
@@ -147,10 +282,8 @@ export class GameService {
         game.status = 'game-over';
       }
 
-      this.games.set(gameId, game);
+      this.games.set(game.gameId, game);
     }
-
-    return game;
   }
 
   private calculateBestMove(
@@ -195,27 +328,6 @@ export class GameService {
     }
 
     return bestMove;
-  }
-
-  endGame(gameId: string, playerId: string): GameState | undefined {
-    const game = this.games.get(gameId);
-    if (game) {
-      game.isGameOver = true;
-      game.status = 'game-over';
-      this.games.delete(gameId);
-    }
-    return game;
-  }
-
-  leaveGame(gameId: string, playerId: string): GameState | undefined {
-    const game = this.games.get(gameId);
-    if (game) {
-      game.isGameOver = true;
-      game.status = 'game-over';
-      game.winner = game.players[playerId].symbol === 'X' ? 'O' : 'X';
-      this.games.set(gameId, game);
-    }
-    return game;
   }
 
   private checkWinner(board: string[]): string | null {

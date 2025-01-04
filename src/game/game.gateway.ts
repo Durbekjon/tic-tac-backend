@@ -63,7 +63,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       .to(this.connectedPlayers[data.from])
       .emit(SOCKET_EVENTS.INVITE_SENT, userInvites);
 
-    this.gameService.createGame(data.from);
+    this.gameService.createGame(data.from, 'NO-BOT');
   }
 
   @SubscribeMessage(SOCKET_EVENTS.REJECT_INVITE)
@@ -119,10 +119,14 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage(SOCKET_EVENTS.PLAY_WITH_BOT)
-  async handlePlayWithBot(client: Socket, data: { userId: string }) {
-    const game = await this.gameService.startGame(data.userId, 'bot');
+  async handlePlayWithBot(
+    client: Socket,
+    data: { userId: string; botLevel: 'EASY' | 'MEDIUM' | 'HARD' },
+  ) {
+    const { userId, botLevel } = data;
+    const game = await this.gameService.startGame(userId, 'bot', botLevel);
     this.server
-      .to(this.connectedPlayers[data.userId])
+      .to(this.connectedPlayers[userId])
       .emit(SOCKET_EVENTS.GAME_STARTED, game);
   }
 
