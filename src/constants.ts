@@ -32,7 +32,6 @@ export const SOCKET_EVENTS = {
   GAME_ERROR: 'gameError' as const,
 
   // Bot events
-
   PLAY_WITH_BOT: 'playWithBot' as const,
   BOT_MOVE: 'botMove' as const,
 } as const;

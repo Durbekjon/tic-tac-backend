@@ -17,139 +17,159 @@ import { Logger } from '@nestjs/common';
   },
 })
 export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
-  @WebSocketServer() server: Server;
-  private connectedPlayers: { [key: string]: string } = {};
-  private userIds = new Map<string, string>(); // playerId -> userId
+  @WebSocketServer() private readonly server: Server;
+  private readonly connectedPlayers: Map<string, string> = new Map(); // userId -> socketId
+  private readonly socketToUserId: Map<string, string> = new Map(); // socketId -> userId
+
   constructor(
     private readonly gameService: GameService,
-    private logger: Logger,
+    private readonly logger: Logger,
   ) {}
 
-  handleConnection(client: Socket) {
-    this.logger.log(`Client connected: ${client.id}`);
+  handleConnection(client: Socket): void {
+    this.logger.debug(`Client connected: ${client.id}`);
   }
 
-  handleDisconnect(client: Socket) {
-    this.logger.log(`Client disconnected: ${client.id}`);
-    this.deletePlayerId(client.id);
-  }
-
-  sendOnlineUsers() {
-    const players = this.gameService.getOnlinePlayers();
-    this.server.emit(SOCKET_EVENTS.ONLINE_USERS, players);
+  handleDisconnect(client: Socket): void {
+    this.logger.debug(`Client disconnected: ${client.id}`);
+    this.removePlayer(client.id);
   }
 
   @SubscribeMessage(SOCKET_EVENTS.USER_CONNECTED)
-  handleUserConnected(client: Socket, user: IUser) {
-    this.connectedPlayers[user.userId] = client.id;
+  handleUserConnected(client: Socket, user: IUser): void {
+    if (!user || !user.userId) {
+      this.logger.warn(`Invalid user data from client: ${client.id}`);
+      return;
+    }
+
+    this.addPlayer(user.userId, client.id);
     this.gameService.addPlayer(user);
-    this.savePlayerId(client.id, user.userId);
-    this.sendOnlineUsers();
+    this.emitOnlineUsers();
   }
 
   @SubscribeMessage(SOCKET_EVENTS.SEND_GAME_INVITE)
-  handleGameInvite(
+  async handleGameInvite(
     client: Socket,
-    data: { from: string; to: string; user: any },
-  ) {
-    this.server
-      .to(this.connectedPlayers[data.to])
-      .emit(SOCKET_EVENTS.GAME_INVITE, data);
+    { from, to }: { from: string; to: string },
+  ): Promise<void> {
+    const recipientSocket = this.connectedPlayers.get(to);
+    if (!recipientSocket) {
+      this.logger.warn(`Recipient not found: ${to}`);
+      return;
+    }
 
-    this.gameService.addInvite(data.from, data.to);
+    await Promise.all([
+      this.gameService.addInvite(from, to),
+      this.server
+        .to(recipientSocket)
+        .emit(SOCKET_EVENTS.GAME_INVITE, { from, to }),
+    ]);
 
-    const userInvites = this.gameService.getInvites(data.from);
-    this.server
-      .to(this.connectedPlayers[data.from])
-      .emit(SOCKET_EVENTS.INVITE_SENT, userInvites);
-
-    this.gameService.createGame(data.from, 'NO-BOT');
+    this.emitInvites(from);
   }
 
   @SubscribeMessage(SOCKET_EVENTS.REJECT_INVITE)
-  handleRejectInvite(client: Socket, data: { from: string; to: string }) {
-    this.gameService.removeInvite(data.from, data.to);
-    const userInvites = this.gameService.getInvites(data.from);
-    this.server
-      .to(this.connectedPlayers[data.from])
-      .emit(SOCKET_EVENTS.INVITE_SENT, userInvites);
-    this.server.to(this.connectedPlayers[data.from]).emit(SOCKET_EVENTS.REJECT);
+  handleRejectInvite(
+    client: Socket,
+    { from, to }: { from: string; to: string },
+  ): void {
+    this.gameService.removeInvite(from, to);
+    this.emitInvites(from);
+    this.server.to(this.connectedPlayers.get(from)).emit(SOCKET_EVENTS.REJECT);
   }
 
   @SubscribeMessage(SOCKET_EVENTS.ACCEPT_INVITE)
-  async handleAcceptInvite(client: Socket, data: { from: string; to: string }) {
-    const game = await this.gameService.startGame(data.from, data.to);
-    this.server
-      .to(this.connectedPlayers[data.from])
-      .to(this.connectedPlayers[data.to])
-      .emit(SOCKET_EVENTS.GAME_STARTED, game);
-
-    this.gameService.removeInvite(data.from, data.to);
-    const userInvites = this.gameService.getInvites(data.from);
-    this.server
-      .to(this.connectedPlayers[data.from])
-      .emit(SOCKET_EVENTS.INVITE_SENT, userInvites);
+  async handleAcceptInvite(
+    client: Socket,
+    { from, to }: { from: string; to: string },
+  ): Promise<void> {
+    const game = await this.gameService.startGame(from, to);
+    this.emitGameEvents(game, SOCKET_EVENTS.GAME_STARTED);
+    this.gameService.removeInvite(from, to);
+    this.emitInvites(from);
   }
 
   @SubscribeMessage(SOCKET_EVENTS.MAKE_MOVE)
   async handleMakeMove(
     client: Socket,
-    data: { gameId: string; playerId: string; position: number },
-  ) {
-    const game = await this.gameService.makeMove(
-      data.gameId,
-      data.playerId,
-      data.position,
-    );
+    {
+      gameId,
+      playerId,
+      position,
+    }: { gameId: string; playerId: string; position: number },
+  ): Promise<void> {
+    const game = await this.gameService.makeMove(gameId, playerId, position);
+    this.emitGameEvents(game, SOCKET_EVENTS.MOVE_MADE);
 
-    this.server.emit(SOCKET_EVENTS.MOVE_MADE, game);
-    this.server.emit(SOCKET_EVENTS.GAME_STATE_UPDATED, game);
-
-    if (game.players['bot']?.symbol === 'O')
-      await this.handleBotMove(game.gameId);
+    if (game.players.bot?.symbol === 'O') {
+      await this.handleBotMove(gameId);
+    }
   }
 
   @SubscribeMessage(SOCKET_EVENTS.LEAVE_GAME)
   async handleLeaveGame(
     client: Socket,
-    data: { gameId: string; playerId: string },
-  ) {
-    const game = await this.gameService.leaveGame(data.gameId, data.playerId);
-    this.server.to(data.gameId).emit(SOCKET_EVENTS.GAME_ENDED, game);
+    { gameId, playerId }: { gameId: string; playerId: string },
+  ): Promise<void> {
+    const game = await this.gameService.leaveGame(gameId, playerId);
+    this.server.to(gameId).emit(SOCKET_EVENTS.GAME_ENDED, game);
   }
 
   @SubscribeMessage(SOCKET_EVENTS.PLAY_WITH_BOT)
   async handlePlayWithBot(
     client: Socket,
-    data: { userId: string; botLevel: 'EASY' | 'MEDIUM' | 'HARD' },
-  ) {
-    const { userId, botLevel } = data;
+    {
+      userId,
+      botLevel,
+    }: { userId: string; botLevel: 'EASY' | 'MEDIUM' | 'HARD' },
+  ): Promise<void> {
     const game = await this.gameService.startGame(userId, 'bot', botLevel);
     this.server
-      .to(this.connectedPlayers[userId])
+      .to(this.connectedPlayers.get(userId))
       .emit(SOCKET_EVENTS.GAME_STARTED, game);
   }
 
-  async handleBotMove(gameId: string) {
+  private async handleBotMove(gameId: string): Promise<void> {
     const game = await this.gameService.botMove(gameId);
     setTimeout(() => {
-      this.server.emit(SOCKET_EVENTS.MOVE_MADE, game);
-
-      this.server.emit(SOCKET_EVENTS.GAME_STATE_UPDATED, game);
+      this.emitGameEvents(game, SOCKET_EVENTS.MOVE_MADE);
     }, 2000);
   }
 
-  private savePlayerId(playerId: string, userId: string) {
-    this.userIds.set(playerId, userId);
+  private addPlayer(userId: string, socketId: string): void {
+    this.connectedPlayers.set(userId, socketId);
+    this.socketToUserId.set(socketId, userId);
   }
-  private deletePlayerId(playerId: string) {
-    const userId = this.userIds.get(playerId);
-    if (userId) {
-      delete this.connectedPlayers[userId];
 
+  private removePlayer(socketId: string): void {
+    const userId = this.socketToUserId.get(socketId);
+    if (userId) {
+      this.connectedPlayers.delete(userId);
+      this.socketToUserId.delete(socketId);
       this.gameService.removePlayer(userId);
-      this.userIds.delete(playerId);
-      this.sendOnlineUsers();
+      this.emitOnlineUsers();
     }
+  }
+
+  private async emitOnlineUsers(): Promise<void> {
+    const players = await this.gameService.getOnlinePlayers();
+    if (players.length > 0) {
+      this.server.emit(SOCKET_EVENTS.ONLINE_USERS, players);
+    }
+  }
+
+  private async emitInvites(userId: string) {
+    const invites = await this.gameService.getInvites(userId);
+
+    this.server
+      .to(this.connectedPlayers.get(userId))
+      .emit(SOCKET_EVENTS.INVITE_SENT, invites);
+  }
+
+  private emitGameEvents(game: any, event: string): void {
+    const playerSockets = Object.keys(game.players).map((playerId) =>
+      this.connectedPlayers.get(playerId),
+    );
+    this.server.to(playerSockets).emit(event, game);
   }
 }
