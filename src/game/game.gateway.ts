@@ -101,7 +101,7 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const game = await this.gameService.makeMove(gameId, playerId, position);
     this.emitGameEvents(game, SOCKET_EVENTS.MOVE_MADE);
 
-    if (game.players.bot?.symbol === 'O') {
+    if (game.players.bot?.symbol === 'O' && !game.isGameOver) {
       await this.handleBotMove(gameId);
     }
   }

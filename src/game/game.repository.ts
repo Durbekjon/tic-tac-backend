@@ -60,24 +60,19 @@ export class GameRepository {
     const symbol = game.players[playerId].symbol;
     game.board[position] = symbol;
     game.players[playerId].lastMovePositions.push(position);
-
-    // Check if the player has more than 4 moves
     if (game.players[playerId].lastMovePositions.length > 3) {
       const oldPosition = game.players[playerId].lastMovePositions.shift();
       if (oldPosition !== undefined) game.board[oldPosition] = '';
     }
 
-    // Check for a winner
     if (this.checkWinner(game.board, symbol)) {
-      game.winner = playerId;
+      game.winner = game.players[playerId].symbol;
       game.isGameOver = true;
-      game.status = 'completed';
+      game.status = 'finished';
     } else if (!game.board.includes('')) {
-      // Check for a draw
       game.isGameOver = true;
-      game.status = 'draw';
+      game.status = 'finished';
     } else {
-      // Switch the turn
       game.currentPlayer = game.currentPlayer === 'X' ? 'O' : 'X';
     }
 
@@ -95,8 +90,9 @@ export class GameRepository {
   async performBotMove(gameId: string): Promise<GameState> {
     const game = this.games.get(gameId);
     if (!game) throw new Error('Game not found');
+    if (!game.botLevel || game.botLevel === 'NO-BOT')
+      throw new Error('No bot configured for this game');
 
-    // Bot move logic
     const availablePositions = game.board
       .map((value, index) => (value === '' ? index : null))
       .filter((pos) => pos !== null) as number[];
@@ -105,8 +101,37 @@ export class GameRepository {
       throw new Error('No moves left for bot');
     }
 
-    const botMove =
-      availablePositions[Math.floor(Math.random() * availablePositions.length)];
+    let botMove: number;
+    switch (game.botLevel) {
+      case 'EASY':
+        botMove =
+          availablePositions[
+            Math.floor(Math.random() * availablePositions.length)
+          ];
+        break;
+
+      case 'MEDIUM':
+        botMove =
+          this.getBlockingMove(game.board, game.players, availablePositions) ??
+          availablePositions[
+            Math.floor(Math.random() * availablePositions.length)
+          ];
+        break;
+
+      case 'HARD':
+        botMove =
+          this.getWinningMove(game.board, 'O') ??
+          this.getBlockingMove(game.board, game.players, availablePositions) ??
+          availablePositions[
+            Math.floor(Math.random() * availablePositions.length)
+          ];
+        break;
+
+      default:
+        throw new Error('Unknown bot level');
+    }
+
+    // Perform the bot's move
     game.board[botMove] = 'O'; // Bot always uses 'O'
     game.players['bot'] = game.players['bot'] || {
       symbol: 'O',
@@ -114,13 +139,11 @@ export class GameRepository {
     };
     game.players['bot'].lastMovePositions.push(botMove);
 
-    // Check if the bot has more than 4 moves
-    if (game.players['bot'].lastMovePositions.length > 4) {
+    if (game.players['bot'].lastMovePositions.length > 3) {
       const oldPosition = game.players['bot'].lastMovePositions.shift();
       if (oldPosition !== undefined) game.board[oldPosition] = '';
     }
 
-    // Check for winner
     if (this.checkWinner(game.board, 'O')) {
       game.winner = 'bot';
       game.isGameOver = true;
@@ -129,7 +152,7 @@ export class GameRepository {
       game.isGameOver = true;
       game.status = 'draw';
     } else {
-      game.currentPlayer = 'X'; // Switch turn back to the player
+      game.currentPlayer = 'X';
     }
 
     return game;
@@ -150,5 +173,32 @@ export class GameRepository {
     return winningCombinations.some((combination) =>
       combination.every((index) => board[index] === symbol),
     );
+  }
+  private getBlockingMove(
+    board: string[],
+    players: GameState['players'],
+    availablePositions: number[],
+  ): number | null {
+    const opponentSymbol = 'X'; // Bot har doim 'O' bo'ladi, shuning uchun o'yinchi 'X'.
+    for (const pos of availablePositions) {
+      const tempBoard = [...board];
+      tempBoard[pos] = opponentSymbol; // Yangi pozitsiyani simulyatsiya qilish
+      if (this.checkWinner(tempBoard, opponentSymbol)) {
+        return pos; // Agar o'yinchi g‘alaba qozonishi mumkin bo‘lsa, ushbu pozitsiyani qaytarish
+      }
+    }
+    return null; // Bloklash kerak bo'lgan joy topilmadi
+  }
+  private getWinningMove(board: string[], botSymbol: string): number | null {
+    for (let i = 0; i < board.length; i++) {
+      if (board[i] === '') {
+        const tempBoard = [...board];
+        tempBoard[i] = botSymbol; // Yangi pozitsiyani simulyatsiya qilish
+        if (this.checkWinner(tempBoard, botSymbol)) {
+          return i; // Agar bot g‘alaba qozonishi mumkin bo‘lsa, ushbu pozitsiyani qaytarish
+        }
+      }
+    }
+    return null; // G‘alaba qilish uchun joy topilmadi
   }
 }
